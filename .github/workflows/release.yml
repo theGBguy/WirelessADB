@@ -18,7 +18,7 @@ jobs:
       NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
       NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Import Developer ID certificate and notary key
         if: env.DEVELOPER_ID_P12_BASE64 != ''
@@ -41,7 +41,7 @@ jobs:
         run: ./build.sh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: WirelessADB
           path: build/WirelessADB.zip
