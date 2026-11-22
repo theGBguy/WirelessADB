@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app
+        run: ./build.sh
+      - name: Zip
+        run: ditto -c -k --keepParent build/WirelessADB.app WirelessADB.zip
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WirelessADB
+          path: WirelessADB.zip
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" WirelessADB.zip --title "$GITHUB_REF_NAME" --generate-notes
