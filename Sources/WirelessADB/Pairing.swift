@@ -52,6 +52,13 @@ final class PairingModel: ObservableObject {
 
     private func connect(_ svc: FoundService) async {
         guard state == .connecting, svc.host == pairedHost else { return }
+        try? await Task.sleep(for: .seconds(2))
+        guard state == .connecting else { return }
+        if await ADB.isConnected(svc) {          // adb auto-connected after pairing
+            state = .done("\(svc.host):\(svc.port)")
+            connectFinder?.stop()
+            return
+        }
         let r = await ADB.run(["connect", "\(svc.host):\(svc.port)"])
         if r.output.contains("connected to") {
             state = .done("\(svc.host):\(svc.port)")

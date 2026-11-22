@@ -15,6 +15,21 @@ enum ADB {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }()
 
+    /// Serials of transports currently in "device" state.
+    static func connectedSerials() async -> [String] {
+        let r = await run(["devices"])
+        return r.output.split(separator: "\n").dropFirst().compactMap { line in
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            return parts.count >= 2 && parts[1] == "device" ? String(parts[0]) : nil
+        }
+    }
+
+    /// True if adb already has a transport for this mDNS service (by name or ip:port).
+    static func isConnected(_ svc: FoundService) async -> Bool {
+        let target = "\(svc.host):\(svc.port)"
+        return await connectedSerials().contains { $0 == target || $0.hasPrefix(svc.name + ".") }
+    }
+
     struct Result { let status: Int32; let output: String }
 
     static func run(_ args: [String]) async -> Result {
