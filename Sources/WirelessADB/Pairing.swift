@@ -119,6 +119,7 @@ struct PairView: View {
         case .waiting:
             Text("On the phone: Developer options › Wireless debugging › Pair device with QR code")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         case .pairing:
             Label("Pairing…", systemImage: "hourglass")
         case .connecting:
@@ -127,6 +128,7 @@ struct PairView: View {
             Label("Connected \(addr)", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed(let msg):
             Text(msg).font(.callout).foregroundStyle(.red).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
