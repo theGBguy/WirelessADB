@@ -61,6 +61,7 @@ final class DeviceStore: ObservableObject {
         refresh()
     }
 
+    private var lastOffline: Set<String> = []
     private var ticks = 0
     private func tick() {
         refresh()
@@ -74,6 +75,17 @@ final class DeviceStore: ObservableObject {
             let r = await ADB.run(["devices", "-l"])
             guard r.status == 0 else { lastError = r.output; return }
             lastError = nil
+            // ip:port transports stuck "offline" for two refreshes are dead (port changed, or the phone
+            // rejected a duplicate); adb keeps them forever, so drop them.
+            let offline = Set(r.output.split(separator: "\n").dropFirst().compactMap { line -> String? in
+                let p = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+                return p.count >= 2 && p[1] == "offline" && p[0].contains(":") && !p[0].contains("._adb-tls") ? p[0] : nil
+            })
+            for t in offline.intersection(lastOffline) {
+                log.info("dropping offline transport \(t, privacy: .public)")
+                _ = await ADB.run(["disconnect", t])
+            }
+            lastOffline = offline
             let all: [Device] = r.output.split(separator: "\n").dropFirst().compactMap { line in
                 let parts = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
                 guard parts.count >= 2, parts[1] == "device" else { return nil }
@@ -93,6 +105,15 @@ final class DeviceStore: ObservableObject {
                 }
             }
             devices = merged
+            // Two Wi-Fi transports for one phone (adb's mDNS auto-connect + an ip:port connect):
+            // keep the mDNS one, drop the ip:port duplicate.
+            for d in merged where d.wireless && d.transports.count > 1
+                && d.transports.contains(where: { $0.contains("._adb-tls-connect") }) {
+                for t in d.transports where !t.contains("._adb-tls-connect") {
+                    log.info("dropping duplicate transport \(t, privacy: .public)")
+                    _ = await ADB.run(["disconnect", t])
+                }
+            }
         }
     }
 

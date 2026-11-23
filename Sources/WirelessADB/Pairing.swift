@@ -71,14 +71,20 @@ final class PairingModel: ObservableObject {
         guard state == .connecting, svc.host == pairedHost, !connectingNow else { return }
         connectingNow = true; defer { connectingNow = false }
         // The phone often needs a moment after pairing; adb may also auto-connect on its own.
+        // adb usually auto-connects a freshly paired phone within a few seconds; prefer that.
+        for _ in 1...4 {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard state == .connecting else { return }
+            if await ADB.isConnected(svc) { state = .done("\(svc.host):\(svc.port)"); connectFinder?.stop(); return }
+        }
         for attempt in 1...5 {
-            try? await Task.sleep(for: .seconds(2))
             guard state == .connecting else { return }
             if await ADB.isConnected(svc) { break }
             let r = await ADB.connect("\(svc.host):\(svc.port)")
             if r.output.contains("connected to") { break }
             log.error("post-pair connect attempt \(attempt): \(r.output, privacy: .public)")
             if attempt == 5 { state = .failed(r.output); return }
+            try? await Task.sleep(for: .seconds(2))
         }
         state = .done("\(svc.host):\(svc.port)")
         connectFinder?.stop()
