@@ -36,36 +36,52 @@ final class PairingModel: ObservableObject {
     private func pair(_ svc: FoundService) async {
         guard svc.name == name, state == .waiting else { return }
         state = .pairing
-        pairFinder?.stop()
-        let r = await ADB.run(["pair", "\(svc.host):\(svc.port)", password])
-        guard r.status == 0, r.output.contains("Successfully paired") else {
-            state = .failed(r.output.isEmpty ? "Pairing failed" : r.output)
+        var last = ""
+        for attempt in 1...3 {
+            let r = await ADB.run(["pair", "\(svc.host):\(svc.port)", password])
+            last = r.output
+            if r.output.contains("Successfully paired") { break }
+            log.error("pair attempt \(attempt): \(r.output, privacy: .public)")
+            if r.output.localizedCaseInsensitiveContains("wrong password") { break }
+            try? await Task.sleep(for: .seconds(1.5))
+        }
+        guard last.contains("Successfully paired") else {
+            state = .failed(last.isEmpty ? "Pairing failed" : last)
             return
         }
+        pairFinder?.stop()
         state = .connecting
         pairedHost = svc.host
         let c = ServiceFinder(type: "_adb-tls-connect._tcp.")
         c.onFound = { [weak self] svc in Task { @MainActor in await self?.connect(svc) } }
         c.start()
         connectFinder = c
+        // If the connect service never shows up, say so instead of spinning forever.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard let self, self.state == .connecting else { return }
+            self.state = .failed("Paired, but the phone didn't advertise a connection. Toggle Wireless debugging off and on.")
+            self.connectFinder?.stop()
+        }
     }
 
+    private var connectingNow = false
+
     private func connect(_ svc: FoundService) async {
-        guard state == .connecting, svc.host == pairedHost else { return }
-        try? await Task.sleep(for: .seconds(2))
-        guard state == .connecting else { return }
-        if await ADB.isConnected(svc) {          // adb auto-connected after pairing
-            state = .done("\(svc.host):\(svc.port)")
-            connectFinder?.stop()
-            return
+        guard state == .connecting, svc.host == pairedHost, !connectingNow else { return }
+        connectingNow = true; defer { connectingNow = false }
+        // The phone often needs a moment after pairing; adb may also auto-connect on its own.
+        for attempt in 1...5 {
+            try? await Task.sleep(for: .seconds(2))
+            guard state == .connecting else { return }
+            if await ADB.isConnected(svc) { break }
+            let r = await ADB.connect("\(svc.host):\(svc.port)")
+            if r.output.contains("connected to") { break }
+            log.error("post-pair connect attempt \(attempt): \(r.output, privacy: .public)")
+            if attempt == 5 { state = .failed(r.output); return }
         }
-        let r = await ADB.run(["connect", "\(svc.host):\(svc.port)"])
-        if r.output.contains("connected to") {
-            state = .done("\(svc.host):\(svc.port)")
-            connectFinder?.stop()
-        } else {
-            state = .failed(r.output)
-        }
+        state = .done("\(svc.host):\(svc.port)")
+        connectFinder?.stop()
     }
 
     private static func random(_ n: Int) -> String {

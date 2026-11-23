@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 struct Device: Identifiable, Hashable {
     let serial: String
@@ -37,11 +38,35 @@ final class DeviceStore: ObservableObject {
                 if self.autoConnect { await self.connect(svc) }
             }
         }
-        finder.start()
+        finder.onRemoved = { [weak self] name in
+            Task { @MainActor in self?.discovered[name] = nil }
+        }
+        Task {
+            let r = await ADB.run(["start-server"])
+            if r.status != 0 { log.error("start-server: \(r.output, privacy: .public)") }
+            finder.start()
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.tick() }
+        }
+        // Bonjour browsing and adb transports often die across sleep; start fresh on wake.
+        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                log.info("wake: restarting discovery")
+                self?.discovered.removeAll()
+                self?.finder.restart()
+            }
         }
         refresh()
+    }
+
+    private var ticks = 0
+    private func tick() {
+        refresh()
+        ticks += 1
+        // Every ~15 s, reconnect advertised-but-disconnected devices (Wi-Fi blips, adb restarts).
+        if autoConnect, ticks % 3 == 0 { connectDiscovered() }
     }
 
     func refresh() {
@@ -88,8 +113,10 @@ final class DeviceStore: ObservableObject {
         connecting.insert(svc.name); defer { connecting.remove(svc.name) }
         // adb's own mDNS backend usually auto-connects; give it a moment, then check fresh state.
         try? await Task.sleep(for: .seconds(3))
+        guard discovered[svc.name] == nil || discovered[svc.name] == svc else { return }  // port changed meanwhile
         if await ADB.isConnected(svc) { refresh(); return }
-        _ = await ADB.run(["connect", "\(svc.host):\(svc.port)"])
+        let r = await ADB.connect("\(svc.host):\(svc.port)")
+        if !r.output.contains("connected to") { log.error("connect \(svc.name, privacy: .public): \(r.output, privacy: .public)") }
         refresh()
     }
 
